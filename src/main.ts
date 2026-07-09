@@ -66,7 +66,7 @@ async function main(): Promise<void> {
         )
         .first()
       const messageButton = searchResult
-        .getByText(/^(发私信|私信|去聊天|聊天)$/, { exact: true })
+        .getByText(/^(发消息|发私信|私信|去聊天|聊天)$/, { exact: true })
         .first()
 
       if (await messageButton.isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -78,7 +78,7 @@ async function main(): Promise<void> {
 
         if (!(await editorInput.isVisible().catch(() => false))) {
           const profileMessageButton = page
-            .getByText(/^(发私信|私信|去聊天)$/, { exact: true })
+            .getByText(/^(发消息|发私信|私信|去聊天)$/, { exact: true })
             .last()
 
           if (await profileMessageButton.isVisible().catch(() => false)) {
