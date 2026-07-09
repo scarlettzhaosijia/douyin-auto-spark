@@ -34,5 +34,14 @@ jobs:
           DOUYIN_TARGET_NAMES: ${{ secrets.DOUYIN_TARGET_NAMES }}
         run: bun src/main.ts
 
+      - name: 上传失败截图 (Upload failure screenshot)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: douyin-failure-screenshot
+          path: failure.png
+          if-no-files-found: ignore
+          retention-days: 3
+
 #      - name: Setup tmate session
 #        uses: mxschmitt/action-tmate@v3

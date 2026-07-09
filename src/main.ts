@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { chromium, type Cookie } from 'playwright'
+import { chromium, type Cookie, type Page } from 'playwright'
 import { readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
@@ -23,12 +23,13 @@ async function main(): Promise<void> {
     headless,
     ...(browserPath ? { executablePath: browserPath } : {}),
   })
+  let page: Page | undefined
 
   try {
     const context = await browser.newContext()
     await context.addCookies(douyinCookies)
 
-    const page = await context.newPage()
+    page = await context.newPage()
     await page.goto('https://www.douyin.com/chat', {
       waitUntil: 'domcontentloaded',
     })
@@ -59,21 +60,37 @@ async function main(): Promise<void> {
         continue
       }
 
-      const messageButton = searchResult.getByText(/^(发私信|私信|聊天)$/, { exact: true }).first()
-
-      if (await messageButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await messageButton.click()
-      } else {
-        console.log(`搜索结果没有私信按钮，尝试直接打开：${name}`)
-        await searchResult.click()
-      }
-      console.log(`已打开私信：${name}`)
-
       const editorInput = page
         .locator(
           '.messageEditorimChatEditorContainer [data-slate-editor="true"][contenteditable="true"]',
         )
         .first()
+      const messageButton = searchResult
+        .getByText(/^(发私信|私信|去聊天|聊天)$/, { exact: true })
+        .first()
+
+      if (await messageButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await messageButton.click()
+      } else {
+        console.log(`搜索结果没有私信按钮，尝试打开资料：${name}`)
+        await searchResult.click()
+        await page.waitForTimeout(1000)
+
+        if (!(await editorInput.isVisible().catch(() => false))) {
+          const profileMessageButton = page
+            .getByText(/^(发私信|私信|去聊天)$/, { exact: true })
+            .last()
+
+          if (await profileMessageButton.isVisible().catch(() => false)) {
+            console.log(`已在资料面板找到私信按钮：${name}`)
+            await profileMessageButton.click()
+          } else {
+            throw new Error(`打开资料后仍找不到私信按钮：${name}`)
+          }
+        }
+      }
+      console.log(`已打开私信：${name}`)
+
       await editorInput.waitFor({ state: 'visible', timeout: 10000 })
       await editorInput.click()
       await page.keyboard.insertText(pickRandomYiyan(yiyans).hitokoto)
@@ -93,6 +110,16 @@ async function main(): Promise<void> {
       await readline.question('Chrome 已打开抖音聊天页，按回车键关闭浏览器...')
       readline.close()
     }
+  } catch (error) {
+    if (page) {
+      await page
+        .screenshot({
+          path: 'failure.png',
+          fullPage: true,
+        })
+        .catch(() => undefined)
+    }
+    throw error
   } finally {
     await browser.close()
   }
