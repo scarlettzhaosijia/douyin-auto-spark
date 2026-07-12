@@ -17,7 +17,7 @@
 
 ## ✨ 项目简介
 
-本项目是一个基于 **Playwright + TypeScript** 的抖音聊天自动化脚本。它会携带你配置的抖音 Cookie 打开聊天页，按配置的会话名称依次定位聊天对象，并从 `assets/yiyan.json` 中随机挑选一句 `hitokoto` 发送出去。
+本项目是一个基于 **Playwright + TypeScript** 的抖音聊天自动化脚本。它会携带你配置的抖音 Cookie 打开聊天页，按配置的会话名称依次定位聊天对象，并从 `assets/yiyan.json` 中随机挑选一句日常问候发送出去。配置火花开始日期后，还可以在问候语末尾自动追加 `[已续火花X天]`。
 
 适合放到 GitHub Actions 中定时运行，也可以在本地用 `pnpm dev` 手动执行。
 
@@ -25,7 +25,8 @@
 
 - 🎭 **Cookie 登录** - 通过 `DOUYIN_COOKIE` 注入抖音登录态，无需脚本内输入账号密码
 - 🎯 **多会话发送** - 通过 `DOUYIN_TARGET_NAMES` 配置多个聊天对象
-- 💬 **随机一言** - 每次从 `assets/yiyan.json` 随机挑选一条 `hitokoto` 作为消息内容
+- 💬 **随机问候** - 每次从 `assets/yiyan.json` 随机挑选一条温和问候作为消息内容
+- 🔥 **火花天数** - 可按 `SPARK_START_DATE` 自动计算并追加 `[已续火花X天]`
 - 🤖 **定时续火** - 通过 Github Action 每天 0 点自动续火（但是 Github 定时任务要排队，可能会延迟几个小时）
 
 ## 🧰 准备工作
@@ -100,6 +101,22 @@ Settings -> Secrets and variables -> Actions -> New repository secret
 | `DOUYIN_COOKIE` | 抖音 Cookie JSON 字符串数组 （上面用浏览器插件获取的那个） |
 | `DOUYIN_TARGET_NAMES` | 需要续火的朋友的用户名称， JSON 字符串数组，例如 ["暮邵落白"] （不会写 JSON 可以问 AI） |
 
+如果想自动显示火花天数，进入：
+
+```text
+Settings -> Secrets and variables -> Actions -> Variables -> New repository variable
+```
+
+添加以下变量：
+
+| Variable | 说明 |
+|:---|:---|
+| `SPARK_START_DATE` | 火花开始日期，格式为 `YYYY-MM-DD`，例如 `2026-06-20` |
+| `SPARK_DAYS` | 可选，手动指定火花天数；配置后优先级高于 `SPARK_START_DATE` |
+| `SPARK_DAYS_ENABLED` | 可选，是否追加火花天数，填 `false` 可关闭 |
+
+例如 `SPARK_START_DATE=2026-06-20`，到 `2026-07-12` 会自动显示 `[已续火花23天]`。
+
 #### 3️⃣ 手动运行一次
 
 ```text
@@ -137,6 +154,9 @@ cp .env.example .env
 | `PLAYWRIGHT_BROWSER_PATH` | ❌ | - | 本机 Chrome / Chromium / Edge 可执行文件路径，不填则使用 Playwright 默认浏览器 |
 | `PLAYWRIGHT_HEADLESS` | ❌ | `true` | 是否使用无头模式 |
 | `AUTO_CLOSE` | ❌ | `true` | 发送完成后是否自动关闭浏览器 |
+| `SPARK_START_DATE` | ❌ | - | 火花开始日期，格式为 `YYYY-MM-DD`，会按北京时间自动计算天数 |
+| `SPARK_DAYS` | ❌ | - | 手动指定火花天数，优先级高于 `SPARK_START_DATE` |
+| `SPARK_DAYS_ENABLED` | ❌ | `true` | 是否在问候语末尾追加火花天数 |
 
 `DOUYIN_TARGET_NAMES` 示例：
 
@@ -156,7 +176,7 @@ DOUYIN_COOKIE='[{"domain":".douyin.com","expirationDate":1800175766.87008,"hostO
 pnpm dev
 ```
 
-脚本会打开 `https://www.douyin.com/chat`，等待页面加载，定位配置中的会话名称，发送随机一言，并在发送后等待约 5 秒再退出。
+脚本会打开 `https://www.douyin.com/chat`，等待页面加载，定位配置中的会话名称，发送随机问候，并在发送后等待约 5 秒再退出。
 
 ## 🔨 开发命令
 
