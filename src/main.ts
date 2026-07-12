@@ -8,6 +8,9 @@ import type { Yiyan } from './types/yiyan'
 
 const DOUYIN_COOKIE_KEY = 'DOUYIN_COOKIE'
 const DOUYIN_TARGET_NAMES_KEY = 'DOUYIN_TARGET_NAMES'
+const SPARK_DAYS_KEY = 'SPARK_DAYS'
+const SPARK_START_DATE_KEY = 'SPARK_START_DATE'
+const SPARK_DAYS_ENABLED_KEY = 'SPARK_DAYS_ENABLED'
 
 /**
  * 启动本机 Chrome 浏览器并携带 Cookie 访问抖音聊天页。
@@ -19,6 +22,7 @@ async function main(): Promise<void> {
   const douyinCookies = resolveDouyinCookies()
   const targetNames = resolveDouyinTargetNames()
   const yiyans = await resolveYiyans()
+  const sparkDays = resolveSparkDays()
   const browser = await chromium.launch({
     headless,
     ...(browserPath ? { executablePath: browserPath } : {}),
@@ -93,7 +97,7 @@ async function main(): Promise<void> {
 
       await editorInput.waitFor({ state: 'visible', timeout: 10000 })
       await editorInput.click()
-      await page.keyboard.insertText(pickRandomYiyan(yiyans).hitokoto)
+      await page.keyboard.insertText(buildMessage(pickRandomYiyan(yiyans), sparkDays))
       await page.keyboard.press('Enter')
       console.log(`已发送消息：${name}`)
       await page.waitForTimeout(1000)
@@ -243,6 +247,107 @@ async function resolveYiyans(): Promise<Yiyan[]> {
  */
 function pickRandomYiyan(yiyans: Yiyan[]): Yiyan {
   return yiyans[Math.floor(Math.random() * yiyans.length)]
+}
+
+/**
+ * 将问候语和火花天数拼成最终发送内容。
+ */
+function buildMessage(yiyan: Yiyan, sparkDays: number | undefined): string {
+  const message = yiyan.hitokoto.trim()
+
+  if (!sparkDays) {
+    return message
+  }
+
+  return `${message}[已续火花${sparkDays}天]`
+}
+
+/**
+ * 解析火花天数。优先使用 SPARK_DAYS；未配置时根据 SPARK_START_DATE 按北京时间自动计算。
+ */
+function resolveSparkDays(): number | undefined {
+  const enabled = process.env[SPARK_DAYS_ENABLED_KEY]?.trim().toLowerCase()
+
+  if (enabled === 'false') {
+    return undefined
+  }
+
+  if (enabled && enabled !== 'true') {
+    throw new Error(`${SPARK_DAYS_ENABLED_KEY} 只能配置为 true 或 false`)
+  }
+
+  const sparkDaysText = process.env[SPARK_DAYS_KEY]?.trim()
+
+  if (sparkDaysText) {
+    const sparkDays = Number(sparkDaysText)
+
+    if (!Number.isInteger(sparkDays) || sparkDays < 1) {
+      throw new Error(`${SPARK_DAYS_KEY} 必须是大于等于 1 的整数`)
+    }
+
+    return sparkDays
+  }
+
+  const startDateText = process.env[SPARK_START_DATE_KEY]?.trim()
+
+  if (!startDateText) {
+    return undefined
+  }
+
+  const startDay = parseDateToUtcDay(startDateText)
+  const today = getBeijingUtcDay()
+  const sparkDays = Math.floor((today - startDay) / 86400000) + 1
+
+  if (sparkDays < 1) {
+    throw new Error(`${SPARK_START_DATE_KEY} 不能晚于今天`)
+  }
+
+  return sparkDays
+}
+
+/**
+ * 解析 YYYY-MM-DD 日期为 UTC 零点时间戳，只比较日期，不比较具体时分秒。
+ */
+function parseDateToUtcDay(dateText: string): number {
+  const match = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/.exec(dateText)
+
+  if (!match?.groups) {
+    throw new Error(`${SPARK_START_DATE_KEY} 必须使用 YYYY-MM-DD 格式，例如 2026-07-01`)
+  }
+
+  const year = Number(match.groups.year)
+  const month = Number(match.groups.month)
+  const day = Number(match.groups.day)
+  const utcDay = Date.UTC(year, month - 1, day)
+  const parsedDate = new Date(utcDay)
+
+  if (
+    parsedDate.getUTCFullYear() !== year ||
+    parsedDate.getUTCMonth() !== month - 1 ||
+    parsedDate.getUTCDate() !== day
+  ) {
+    throw new Error(`${SPARK_START_DATE_KEY} 不是有效日期`)
+  }
+
+  return utcDay
+}
+
+/**
+ * 获取北京时间今天的 UTC 零点时间戳。
+ */
+function getBeijingUtcDay(): number {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+
+  const year = Number(parts.find((part) => part.type === 'year')?.value)
+  const month = Number(parts.find((part) => part.type === 'month')?.value)
+  const day = Number(parts.find((part) => part.type === 'day')?.value)
+
+  return Date.UTC(year, month - 1, day)
 }
 
 /**
