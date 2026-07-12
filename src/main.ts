@@ -269,14 +269,18 @@ function buildMessage(yiyan: Yiyan, sparkDays: number | undefined): string {
  * 从当前聊天页识别抖音展示的火花天数。
  */
 async function resolveCurrentChatSparkDays(page: Page): Promise<number | undefined> {
-  const bodyText = await page
-    .locator('body')
-    .innerText({
-      timeout: 3000,
-    })
-    .catch(() => '')
+  for (let attempt = 1; attempt <= 10; attempt += 1) {
+    const sparkText = await collectSparkText(page)
+    const sparkDays = parseSparkDays(sparkText)
 
-  return parseSparkDays(bodyText)
+    if (sparkDays) {
+      return sparkDays
+    }
+
+    await page.waitForTimeout(500)
+  }
+
+  return undefined
 }
 
 /**
@@ -286,10 +290,13 @@ function parseSparkDays(rawText: string): number | undefined {
   const text = rawText.replace(/\[?已续火花\d{1,5}天\]?/g, '').replace(/\s+/g, '')
   const patterns = [
     /火花(?:已)?(?:连续)?(?:点亮|燃烧|续)?(\d{1,5})天/g,
+    /火花[:：]?(\d{1,5})/g,
     /(?:已)?(?:连续)?(\d{1,5})天(?:火花|聊天火花)/g,
+    /(?:火花|聊天火花)(?:已达|达到|已满)?(\d{1,5})/g,
     /聊天火花(\d{1,5})天/g,
     /(?:已)?连续(?:聊天|互动)(\d{1,5})天/g,
     /(?:你们|我们)(?:已)?连续(\d{1,5})天/g,
+    /第(\d{1,5})天(?:火花|聊天)/g,
   ]
 
   for (const pattern of patterns) {
@@ -301,6 +308,47 @@ function parseSparkDays(rawText: string): number | undefined {
   }
 
   return undefined
+}
+
+/**
+ * 收集可见文字和常见可访问性属性。抖音部分徽章文案可能不出现在 innerText 里。
+ */
+async function collectSparkText(page: Page): Promise<string> {
+  return page
+    .evaluate(() => {
+      const values = new Set<string>()
+      const pick = (value: string | null | undefined): void => {
+        if (!value) return
+
+        const normalizedValue = value.trim()
+
+        if (!normalizedValue) return
+
+        if (/[火花连续聊天互动天]/.test(normalizedValue)) {
+          values.add(normalizedValue)
+        }
+      }
+
+      pick(document.body.innerText)
+      pick(document.body.textContent)
+
+      for (const element of Array.from(document.querySelectorAll('*'))) {
+        pick(element.textContent)
+
+        if (element instanceof HTMLElement || element instanceof SVGElement) {
+          pick(element.getAttribute('aria-label'))
+          pick(element.getAttribute('title'))
+          pick(element.getAttribute('alt'))
+          pick(element.getAttribute('data-e2e'))
+          pick(element.getAttribute('data-log'))
+          pick(element.getAttribute('data-text'))
+          pick(element.getAttribute('data-title'))
+        }
+      }
+
+      return Array.from(values).join('\n')
+    })
+    .catch(() => '')
 }
 
 function findSparkDaysByPattern(text: string, pattern: RegExp): number | undefined {
