@@ -2,6 +2,10 @@ name: 🚀 续一次火
 
 on:
   workflow_dispatch:
+    inputs:
+      spark_days:
+        description: "可选：手动指定火花天数，留空则按 SPARK_START_DATE 自动计算"
+        required: false
   schedule:
     - cron: "0 0 * * *"
       timezone: "Asia/Shanghai"
@@ -32,6 +36,9 @@ jobs:
         env:
           DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
           DOUYIN_TARGET_NAMES: ${{ secrets.DOUYIN_TARGET_NAMES }}
+          SPARK_DAYS: ${{ github.event.inputs.spark_days || vars.SPARK_DAYS }}
+          SPARK_START_DATE: ${{ vars.SPARK_START_DATE }}
+          SPARK_DAYS_ENABLED: ${{ vars.SPARK_DAYS_ENABLED }}
         run: bun src/main.ts
 
       - name: 上传失败截图 (Upload failure screenshot)
