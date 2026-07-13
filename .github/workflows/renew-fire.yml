@@ -39,7 +39,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: douyin-failure-screenshot
-          path: failure.png
+          path: |
+            failure.png
+            failure-*.png
           if-no-files-found: ignore
           retention-days: 3
 
