@@ -8,6 +8,14 @@ import type { Yiyan } from './types/yiyan'
 
 const DOUYIN_COOKIE_KEY = 'DOUYIN_COOKIE'
 const DOUYIN_TARGET_NAMES_KEY = 'DOUYIN_TARGET_NAMES'
+const MAX_SEND_ATTEMPTS = 3
+
+interface SendResult {
+  attempts: number
+  error?: string
+  name: string
+  success: boolean
+}
 
 /**
  * 启动本机 Chrome 浏览器并携带 Cookie 访问抖音聊天页。
@@ -39,71 +47,29 @@ async function main(): Promise<void> {
     const searchInput = page.locator('input.semi-input[placeholder="搜索"]').first()
     await searchInput.waitFor({ state: 'visible', timeout: 10000 })
 
+    const results: SendResult[] = []
+
     for (const targetName of targetNames) {
       const name = String(targetName).trim()
       if (!name) continue
 
-      console.log(`开始搜索会话：${name}`)
-      await searchInput.fill('')
-      await searchInput.fill(name)
-      await page.waitForTimeout(1000)
+      results.push(
+        await sendMessageWithRetry({
+          name,
+          page,
+          searchInput,
+          yiyans,
+        }),
+      )
+    }
 
-      const searchResult = page
-        .locator('.SearchPanelitembox')
-        .filter({
-          has: page.getByText(name, { exact: true }),
-        })
-        .first()
+    printSendSummary(results)
 
-      if (!(await searchResult.isVisible({ timeout: 5000 }).catch(() => false))) {
-        console.log(`找不到搜索结果，已跳过：${name}`)
-        continue
-      }
-
-      const editorInput = page
-        .locator(
-          '.messageEditorimChatEditorContainer [data-slate-editor="true"][contenteditable="true"]',
-        )
-        .first()
-      const messageButton = searchResult
-        .getByText(/^(发消息|发私信|私信|去聊天|聊天)$/, { exact: true })
-        .first()
-
-      if (await messageButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await messageButton.click()
-      } else {
-        console.log(`搜索结果没有私信按钮，尝试打开资料：${name}`)
-        await searchResult.click()
-        await page.waitForTimeout(1000)
-
-        if (!(await editorInput.isVisible().catch(() => false))) {
-          const profileMessageButton = page
-            .getByText(/^(发消息|发私信|私信|去聊天)$/, { exact: true })
-            .last()
-
-          if (await profileMessageButton.isVisible().catch(() => false)) {
-            console.log(`已在资料面板找到私信按钮：${name}`)
-            await profileMessageButton.click()
-          } else {
-            throw new Error(`打开资料后仍找不到私信按钮：${name}`)
-          }
-        }
-      }
-      console.log(`已打开私信：${name}`)
-
-      await editorInput.waitFor({ state: 'visible', timeout: 10000 })
-      await editorInput.click()
-      const sparkDays = await resolveCurrentChatSparkDays(page)
-      if (sparkDays) {
-        console.log(`已识别火花天数：${name} ${sparkDays}天`)
-      } else {
-        console.log(`未识别到火花天数，将只发送问候语：${name}`)
-      }
-
-      await page.keyboard.insertText(buildMessage(pickRandomYiyan(yiyans), sparkDays))
-      await page.keyboard.press('Enter')
-      console.log(`已发送消息：${name}`)
-      await page.waitForTimeout(1000)
+    const failedResults = results.filter((result) => !result.success)
+    if (failedResults.length > 0) {
+      throw new Error(
+        `部分会话发送失败：${failedResults.map((result) => `${result.name}（${result.error ?? '未知原因'}）`).join('；')}`,
+      )
     }
 
     await page.waitForTimeout(5000)
@@ -130,6 +96,178 @@ async function main(): Promise<void> {
   } finally {
     await browser.close()
   }
+}
+
+async function sendMessageWithRetry({
+  name,
+  page,
+  searchInput,
+  yiyans,
+}: {
+  name: string
+  page: Page
+  searchInput: ReturnType<Page['locator']>
+  yiyans: Yiyan[]
+}): Promise<SendResult> {
+  let lastError = '未知原因'
+
+  for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt += 1) {
+    try {
+      console.log(`开始发送会话：${name}（第 ${attempt}/${MAX_SEND_ATTEMPTS} 次）`)
+      await sendMessageOnce({
+        name,
+        page,
+        searchInput,
+        yiyans,
+      })
+
+      return {
+        attempts: attempt,
+        name,
+        success: true,
+      }
+    } catch (error) {
+      lastError = formatError(error)
+      console.log(`发送失败：${name}（第 ${attempt}/${MAX_SEND_ATTEMPTS} 次）：${lastError}`)
+      await screenshotForTargetFailure(page, name, attempt)
+
+      if (attempt < MAX_SEND_ATTEMPTS) {
+        await resetChatPage(page, searchInput)
+      }
+    }
+  }
+
+  return {
+    attempts: MAX_SEND_ATTEMPTS,
+    error: lastError,
+    name,
+    success: false,
+  }
+}
+
+async function sendMessageOnce({
+  name,
+  page,
+  searchInput,
+  yiyans,
+}: {
+  name: string
+  page: Page
+  searchInput: ReturnType<Page['locator']>
+  yiyans: Yiyan[]
+}): Promise<void> {
+  console.log(`开始搜索会话：${name}`)
+  await searchInput.fill('')
+  await searchInput.fill(name)
+  await page.waitForTimeout(1500)
+
+  const searchResult = page
+    .locator('.SearchPanelitembox')
+    .filter({
+      has: page.getByText(name, { exact: true }),
+    })
+    .first()
+
+  if (!(await searchResult.isVisible({ timeout: 10000 }).catch(() => false))) {
+    throw new Error(`找不到搜索结果：${name}`)
+  }
+
+  const editorInput = page
+    .locator(
+      '.messageEditorimChatEditorContainer [data-slate-editor="true"][contenteditable="true"]',
+    )
+    .first()
+  const messageButton = searchResult
+    .getByText(/^(发消息|发私信|私信|去聊天|聊天)$/, { exact: true })
+    .first()
+
+  if (await messageButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await messageButton.click()
+  } else {
+    console.log(`搜索结果没有私信按钮，尝试打开资料：${name}`)
+    await searchResult.click()
+    await page.waitForTimeout(1500)
+
+    if (!(await editorInput.isVisible().catch(() => false))) {
+      const profileMessageButton = page
+        .getByText(/^(发消息|发私信|私信|去聊天)$/, { exact: true })
+        .last()
+
+      if (await profileMessageButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+        console.log(`已在资料面板找到私信按钮：${name}`)
+        await profileMessageButton.click()
+      } else {
+        throw new Error(`打开资料后仍找不到私信按钮：${name}`)
+      }
+    }
+  }
+  console.log(`已打开私信：${name}`)
+
+  await editorInput.waitFor({ state: 'visible', timeout: 15000 })
+  await editorInput.click()
+  const sparkDays = await resolveCurrentChatSparkDays(page)
+  if (sparkDays) {
+    console.log(`已识别火花天数：${name} ${sparkDays}天`)
+  } else {
+    console.log(`未识别到火花天数，将只发送问候语：${name}`)
+  }
+
+  await page.keyboard.insertText(buildMessage(pickRandomYiyan(yiyans), sparkDays))
+  await page.keyboard.press('Enter')
+  console.log(`已发送消息：${name}`)
+  await page.waitForTimeout(1000)
+}
+
+function printSendSummary(results: SendResult[]): void {
+  const successResults = results.filter((result) => result.success)
+  const failedResults = results.filter((result) => !result.success)
+
+  console.log('发送结果汇总：')
+  console.log(
+    `成功 ${successResults.length} 个：${successResults.map((result) => result.name).join('、') || '无'}`,
+  )
+  console.log(
+    `失败 ${failedResults.length} 个：${
+      failedResults.map((result) => `${result.name}（${result.error ?? '未知原因'}）`).join('、') ||
+      '无'
+    }`,
+  )
+}
+
+async function resetChatPage(page: Page, searchInput: ReturnType<Page['locator']>): Promise<void> {
+  await page
+    .goto('https://www.douyin.com/chat', {
+      waitUntil: 'domcontentloaded',
+    })
+    .catch(() => undefined)
+  await page.waitForTimeout(5000)
+  await searchInput.waitFor({ state: 'visible', timeout: 10000 })
+  await searchInput.fill('').catch(() => undefined)
+}
+
+async function screenshotForTargetFailure(
+  page: Page,
+  name: string,
+  attempt: number,
+): Promise<void> {
+  await page
+    .screenshot({
+      path: `failure-${toSafeFileName(name)}-attempt-${attempt}.png`,
+      fullPage: true,
+    })
+    .catch(() => undefined)
+}
+
+function toSafeFileName(name: string): string {
+  return name.replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 40) || 'unknown'
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  return String(error)
 }
 
 /**
